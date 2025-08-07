@@ -1,0 +1,164 @@
+generators:
+  train:
+    _target_: tnp.data.hadISD.HadISDDataGenerator
+    min_nc: 1
+    max_nc: 2033 # 2033 is max for certain box
+    nt: 250
+    ordering_strategy: ${params.ordering_strategy}
+    samples_per_epoch: 32_000
+    batch_size: 32
+    data_directory: ${params.train_path}
+  val:
+    _target_: tnp.data.hadISD.HadISDDataGenerator
+    min_nc: 1
+    max_nc: 2033
+    nt: 250
+    ordering_strategy: ${params.ordering_strategy}
+    samples_per_epoch: 4_000
+    batch_size: 32
+    deterministic: True
+    data_directory: ${params.val_path}
+  test:
+    _target_: tnp.data.hadISD.HadISDDataGenerator
+    min_nc: 1
+    max_nc: 2033
+    nt: 250
+    ordering_strategy: ${params.ordering_strategy}
+    samples_per_epoch: 80_000
+    batch_size: 32
+    deterministic: True
+    data_directory: ${params.test_path}
+
+model:
+  _target_: tnp.models.castnp.TNPCausal
+  encoder: ${tnp_encoder}
+  decoder: ${tnp_decoder}
+  likelihood: ${likelihood}
+
+tnp_encoder:
+  _target_: tnp.models.castnp.TNPEncoderMasked
+  transformer_encoder: ${transformer_encoder}
+  xy_encoder: ${xy_encoder}
+  x_encoder: ${x_encoder}
+
+transformer_encoder:
+  _target_: tnp.networks.transformer.TNPTransformerMaskedEncoder
+  mhsa_layer: ${mhsa_layer}
+  mhca_layer: ${mhca_layer}
+  num_layers: ${params.num_layers}
+
+mhsa_layer:
+  _target_: tnp.networks.attention_layers.MultiHeadSelfAttentionLayer
+  embed_dim: ${params.embed_dim}
+  num_heads: ${params.num_heads}
+  head_dim: ${params.head_dim}
+  feedforward_dim: ${params.embed_dim}
+  norm_first: ${params.norm_first}
+
+mhca_layer:
+  _target_: tnp.networks.attention_layers.MultiHeadCrossAttentionLayer
+  embed_dim: ${params.embed_dim}
+  num_heads: ${params.num_heads}
+  head_dim: ${params.head_dim}
+  feedforward_dim: ${params.embed_dim}
+  norm_first: ${params.norm_first}
+
+xy_encoder:
+  _target_: tnp.networks.mlp.MLP
+  in_dim: ${eval:'1 + ${params.dim_y} + ${params.lat_embed_dims} + ${params.lon_embed_dims} + ${params.time_embed_dims} + ${params.elev_embed_dims}'}
+  out_dim: ${params.embed_dim}
+  num_layers: 2
+  width: ${params.embed_dim}
+
+x_encoder:
+  _target_: tnp.networks.fourier_embed.FourierEmbedderHadISD
+  embed_dim_lambdamin_lambda_max:
+    - ${params.lat_emb_lmin_lmax}
+    - ${params.lon_emb_lmin_lmax}
+    - ${params.elev_emb_lmin_lmax}
+    - ${params.time_emb_lmin_lmax}
+
+tnp_decoder:
+  _target_: tnp.models.tnp.TNPDecoder
+  z_decoder: ${z_decoder}
+
+z_decoder:
+  _target_: tnp.networks.mlp.MLP
+  in_dim: ${params.embed_dim}
+  out_dim: ${eval:'2 * ${params.dim_y}'}
+  num_layers: 2
+  width: ${params.embed_dim}
+
+likelihood:
+  _target_: tnp.likelihoods.gaussian.HeteroscedasticNormalLikelihood
+
+optimiser:
+  _target_: torch.optim.AdamW
+  _partial_: True
+  lr: 5.0e-4
+
+params:
+  # Model + Training Params
+  epochs: 100
+  embed_dim: 128
+  num_heads: 8
+  head_dim: 16
+  norm_first: True
+  num_layers: 5
+
+  # Embedding dimensions for x encoder
+  lat_embed_dims: 32
+  lon_embed_dims: 32
+  time_embed_dims: 32
+  elev_embed_dims: 32
+  lat_emb_lmin_lmax: # lat is [-1, 1]
+    - ${params.lat_embed_dims}
+    - 0.001
+    - 2.0
+  lon_emb_lmin_lmax: # long is [-1, 1]
+    - ${params.lon_embed_dims}
+    - 0.001
+    - 2.0
+  time_emb_lmin_lmax: # 8760 = 24 * 365 (i.e hours in a year)
+    - ${params.time_embed_dims}
+    - 1.0
+    - 8760.0
+  elev_emb_lmin_lmax: # Elevation is z normalised. for current patch 7.7 sigma is the most extreme elev
+    - ${params.elev_embed_dims}
+    - 0.1
+    - 8.0
+
+  # Fixed constants known
+  dim_x: 4
+  dim_y: 1
+
+  # Data Params - this may need some hand crafted finetuning (rune the pre proc scripts first if changing ranges). Also this might not always be checked properly so ensure they are correct
+  ordering_strategy: "random"
+
+  # File paths for specific training resource (adjust for machine)
+  train_path: "/home/pm846/rds/hpc-work/Thesis/TNP-Inc/experiments/data_temp/csd3_all_data/downloaded/other/data_processed/train"
+  val_path: "/home/pm846/rds/hpc-work/Thesis/TNP-Inc/experiments/data_temp/csd3_all_data/downloaded/other/data_processed/val"
+  test_path: "/home/pm846/rds/hpc-work/Thesis/TNP-Inc/experiments/data_temp/csd3_all_data/downloaded/other/data_processed/test"
+
+misc:
+  project: mask-tnp-had
+  name: mask-TNP-L${params.num_layers}-H${params.num_heads}-D${params.embed_dim}
+  resume_from_checkpoint: null
+  gradient_clip_val: 0.5
+
+  # Plot misc
+  eval_name: test_eval
+  num_grid_points_plot: 200 # Number of points to use for plot of gridded predictions
+  dem_path: "/home/pm846/rds/hpc-work/Thesis/TNP-Inc/experiments/data_temp/csd3_all_data/downloaded/other/elev_data/ETOPO_2022_v1_60s_N90W180_surface.nc" # dem file
+  cache_dem_dir: "/home/pm846/rds/hpc-work/Thesis/TNP-Inc/experiments/data_temp/csd3_all_data/downloaded/other/elev_data/" # Where to cache dem processing results
+  seed: 1
+  only_plots: False
+  num_plots: 10
+  subplots: True
+  savefig: True
+  logging: True
+  plot_interval: 10
+  check_val_every_n_epoch: 1
+  checkpoint_interval: 20
+  num_workers: 5
+  num_val_workers: 2

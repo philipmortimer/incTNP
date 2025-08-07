@@ -1,0 +1,20 @@
+program: /homes/pm846/Thesis/Code/TNP-Inc/experiments/train.py
+method: bayes # Bayes opt of LR
+
+metric:
+  name: val/loglik
+  goal: maximize
+
+parameters:
+  learning_rate:
+    distribution: log_uniform_values
+    min: 1.0e-5
+    max: 1.0e-2
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --config
+  - /homes/pm846/Thesis/Code/TNP-Inc/experiments/configs/synthetic1dRBF/lr_sweep/batched/gp_batched_causal_tnp_rbf_rangesame.yml
+  - ${args}
